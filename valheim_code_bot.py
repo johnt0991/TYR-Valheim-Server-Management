@@ -11,6 +11,8 @@ import requests
 import psutil
 from datetime import datetime, timedelta
 import sys
+import re
+
 
 # Path to your .bat script
 BAT_SCRIPT_PATH = "start_headless_server.bat"
