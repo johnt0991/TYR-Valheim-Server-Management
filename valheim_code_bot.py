@@ -33,6 +33,14 @@ reset_interval = 6  # Default reset interval in hours
 reset_start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).time()
 next_reset_time = None
 
+
+def send_to_textbox(message):
+    """Send a message to the console output text box."""
+    if text_area_console:  # Ensure the widget exists
+        text_area_console.insert(tk.END, message + "\n")
+        text_area_console.yview(tk.END)
+
+
 def send_to_discord(message):
     """Send a message to Discord using a webhook."""
     if not WEBHOOK_URL:
@@ -42,10 +50,13 @@ def send_to_discord(message):
     response = requests.post(WEBHOOK_URL, json=payload)
     if response.status_code != 204:
         print(f"Failed to send message: {response.status_code}, {response.text}")
-
+    else: send_to_textbox("Message Successfully Posted to Discord.")
+        
 def start_batch_script():
     """Runs the .bat script and captures the output."""
-    global process, server_running
+    global process, server_running, session_name, join_code, server_ip
+
+    # Start the .bat script
     process = subprocess.Popen(
         BAT_SCRIPT_PATH,
         stdout=subprocess.PIPE,
@@ -59,31 +70,38 @@ def start_batch_script():
         print(f"The server has started. The next scheduled reset is at: {next_reset_time}")
         send_to_discord(f"The server has started. The next scheduled reset is at: {next_reset_time}")
 
+
+
+
+    # Monitor the server output line-by-line
     for line in process.stdout:
         print(line.strip())
-        update_server_info(line.strip())
         update_text_widget(line.strip(), "all")
         
+        # Handle warnings and errors
         if "WARNING" in line:
             update_text_widget(line.strip(), "warning")
         elif "ERROR" in line:
             update_text_widget(line.strip(), "error")
 
-        # Dynamically capture session name using regex
+        # Extract session name and join code dynamically
         session_match = re.search(r'Session "(.*?)" registered with join code', line)
         if session_match:
-            session_name = session_match.group(1)  # Dynamically extracted session name
-            join_code = line.split(' ')[-1]
-            message = f"Session Name: {session_name}.  Session join code: {join_code}"
+            session_name = session_match.group(1)  # Extract session name
+            join_code = line.split(' ')[-1]  # Extract join code
+            message = f"The server has started.\nSession Name: {session_name}.  Session join code: {join_code}"
             send_to_discord(message)
             update_text_widget(message, "join_code")
+            update_server_info(line.strip())
 
+        # Extract server IP dynamically
         if "This is the serverIP used to register the server" in line:
-            server_ip = line.split(': ')[-1]
+            server_ip = line.split(': ')[-1]  # Extract the server IP
             update_server_info(line.strip())
 
     server_running = False
     update_server_info("Server has stopped.")
+
 
 def update_server_info(line):
     """Update the Main tab with server information."""
@@ -111,16 +129,22 @@ def update_text_widget(message, filter_type):
 def stop_server():
     """Stop the server by sending CTRL+C (CTRL_C_EVENT) to the process."""
     try:
+        # Get the process ID of the valheim_server.exe process
         for proc in psutil.process_iter(attrs=['pid', 'name']):
             if "valheim_server.exe" in proc.info['name']:
                 pid = proc.info['pid']
                 break
+        
+        # Use ctypes to send CTRL+C (CTRL_C_EVENT) to the process
         if pid:
-            handle = ctypes.windll.kernel32.OpenProcess(1, False, pid)
-            ctypes.windll.kernel32.GenerateConsoleCtrlEvent(0, pid)
+            handle = ctypes.windll.kernel32.OpenProcess(1, False, pid)  # 1 means PROCESS_TERMINATE
+            ctypes.windll.kernel32.GenerateConsoleCtrlEvent(0, pid)  # 0 is CTRL_C_EVENT
+
+            # Optionally, wait and send 'y' (simulating confirmation)
             time.sleep(5)
             pyautogui.write('y')
             pyautogui.press('enter')
+
             print(f"Sent CTRL+C (CTRL_C_EVENT) to process {pid}.")
         else:
             print("Process not found.")
@@ -193,23 +217,6 @@ def apply_webhook_settings(webhook_url_var):
     WEBHOOK_URL = webhook_url_var.get()
     print(f"Webhook URL set to: {WEBHOOK_URL}")
 
-def redirect_console_output():
-    """Redirect all console output to the Console tab."""
-    class ConsoleOutput:
-        def __init__(self, widget):
-            self.widget = widget
-
-        def write(self, message):
-            self.widget.insert(tk.END, message)
-            self.widget.yview(tk.END)
-
-        def flush(self):
-            pass  # Required to make it compatible with print()
-
-    sys.stdout = ConsoleOutput(text_area_console)
-    sys.stderr = ConsoleOutput(text_area_console)
-    
-    
 def clear_text_boxes():
     """Clears all scrolled text areas."""
     text_area_main.delete(1.0, tk.END)
@@ -294,17 +301,16 @@ def create_gui():
     button_frame.pack(pady=10)  # Pack the frame into the main window
     
     # Define buttons and pack them side-by-side into the button_frame
+    
+    start_button = tk.Button(button_frame, text="Start Server", command=lambda: threading.Thread(target=start_batch_script, daemon=True).start())
+    start_button.pack(side=tk.LEFT, padx=5)
+
     stop_button = tk.Button(button_frame, text="Stop Server", command=stop_server)
     stop_button.pack(side=tk.LEFT, padx=5)
     
     clear_button = tk.Button(button_frame, text="Clear All", command=clear_text_boxes)
     clear_button.pack(side=tk.LEFT, padx=5)
-    
-    start_button = tk.Button(button_frame, text="Start Server", command=lambda: threading.Thread(target=start_batch_script, daemon=True).start())
-    start_button.pack(side=tk.LEFT, padx=5)
 
-
-    redirect_console_output()  # Redirect console output to the Console tab
     threading.Thread(target=schedule_resets, daemon=True).start()
     window.mainloop()
 
