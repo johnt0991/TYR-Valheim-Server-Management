@@ -38,7 +38,7 @@ program_running = True
 window = None
 
 
-def send_to_sys_tab(message):
+def send_to_console_tab(message):
     """Send a message to the console output text box."""
     if text_area_console:  #if widget exists
         text_area_console.insert(tk.END, message + "\n") #insert message and then new line
@@ -60,7 +60,7 @@ def send_to_discord(message):
     response = requests.post(WEBHOOK_URL, json=payload)
     if response.status_code != 204:
         print(f"Failed to send message: {response.status_code}, {response.text}")
-    else: send_to_sys_tab("Message Successfully Posted to Discord.")
+    else: send_to_console_tab("Message Successfully Posted to Discord.")
         
 def start_batch_script():
     """Runs the .bat script and captures the output."""
@@ -72,7 +72,7 @@ def start_batch_script():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        shell=False
+        shell=True
     )
     server_running = True
     send_to_process_tab("Subprocess for valheim_server.exe started.")
@@ -82,7 +82,7 @@ def start_batch_script():
     update_active_processes()
 
     if reset_enabled and next_reset_time:
-        send_to_sys_tab(f"The server has started. The next scheduled reset is at: {next_reset_time}")
+        send_to_console_tab(f"The server has started. The next scheduled reset is at: {next_reset_time}")
 
     # Monitor the server output line-by-line
     for line in process.stdout:
@@ -96,7 +96,7 @@ def start_batch_script():
             update_text_widget(line.strip(), "error")
 
         # Extract session name and join code dynamically
-        session_match = re.search(r'Session "(.*?)" registered with join code', line)
+        session_match = re.search(r'Session "(.*?)" with join code', line)
         if session_match:
             session_name = session_match.group(1)  # Extract session name
             join_code = line.split(' ')[-1]  # Extract join code
