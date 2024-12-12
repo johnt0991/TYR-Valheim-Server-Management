@@ -1,6 +1,6 @@
 TYR - Valheim Server Management 
 
-Tyr runs off prexisting files from the Valheim Server install.  It provides options for Discord Webhooking, Automated server restarts, and logging to make troubleshooting easier.
+Tyr runs off prexisting files from the Valheim Server install.  It provides options for Discord Webhooking, Automated server restarts, and logging to make troubleshooting easier.  Tyr is coded using python and the GUI uses TKinter.
 
 Session Info Tab - 
   Here you will find information on your server.  Once the server fully starts, the session name, IP address and Join code will be visible.
