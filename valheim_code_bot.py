@@ -11,6 +11,7 @@ import requests
 import psutil
 from datetime import datetime, timedelta
 import re
+from tkinter import messagebox
 # %%
 # %% Global Variables
 
@@ -28,20 +29,21 @@ reset_start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecon
 next_reset_time = None
 program_running = True
 window = None
+timer_active = False
 # %%
 # %% Message Posting Functions
 
 def send_to_action_tab(message):
     """Send a message to the console output text box."""
     if text_area_action:  #if widget exists
-        time_stamp = str(datetime.now("%H:%M:%S"))
-        text_area_action.insert(tk.END, message + " " + time_stamp + "\n") #insert message and then new line
+        time_stamp = datetime.now().strftime("%H:%M:%S")
+        text_area_action.insert(tk.END, message + " " + time_stamp + "\n")
         text_area_action.yview(tk.END)
 
 def send_to_process_tab(message):
     """Sends an opened process to the processes tab"""
     if text_area_processes: #if widget exists
-        time_stamp = str(datetime.now("%H:%M:%S"))
+        time_stamp = datetime.now().strftime("%H:%M:%S")
         text_area_processes.insert(tk.END, message + " " + time_stamp + "\n") #insert new message and then new line
         text_area_processes.yview(tk.END)
 
@@ -78,6 +80,32 @@ def update_text_widget(message, filter_type):
         widget = widgets[filter_type]
         widget.insert(tk.END, message + '\n')
         widget.yview(tk.END)
+        
+def update_active_processes():
+    """Update the Active Processes tab."""
+    def update_gui():
+        text_area_processes.delete(1.0, tk.END)  # Clear the previous list
+        for proc in active_processes:
+            text_area_processes.insert(tk.END, f"Process PID: {proc.pid} started at {datetime.now()}\n")
+        text_area_processes.yview(tk.END)
+
+    # Schedule the update to happen in the main thread
+    window.after(0, update_gui)       
+    
+def restart_reminder():
+    global countdown_timer
+    if countdown_timer == 900:
+        send_to_discord("15 Minutes until next restart")
+        send_to_action_tab("15 Minutes until next restart")
+    if countdown_timer == 600:
+        send_to_discord("10 Minutes until next restart")
+        send_to_action_tab("10 Minutes until next restart")
+    if countdown_timer == 300:
+        send_to_discord("5 Minutes until next restart.")
+        send_to_action_tab("5 Minutes until next restart")
+
+def pop_up_warning(message):
+    messagebox.showinfo("Notice:", message)
 # %%
         
 # %% Server Run Functions
@@ -159,86 +187,94 @@ def stop_server():
         process.wait()  # Ensure the process is terminated
     update_active_processes()
 # %%
-
-def update_active_processes():
-    """Update the Active Processes tab."""
-    def update_gui():
-        text_area_processes.delete(1.0, tk.END)  # Clear the previous list
-        for proc in active_processes:
-            text_area_processes.insert(tk.END, f"Process PID: {proc.pid} started at {datetime.now()}\n")
-        text_area_processes.yview(tk.END)
-
-    # Schedule the update to happen in the main thread
-    window.after(0, update_gui)
-
-def enable_reset(reset_checkbox, reset_interval_entry, reset_start_time_dropdown):
+# %% Reset Scheduling
+def enable_reset(reset_checkbox, reset_interval_entry, reset_start_time_dropdown, apply_button):
     """Enable or disable the Reset Interval and Start Time fields based on the checkbox state."""
-    global reset_enabled
+    global reset_enabled, cancel_timer_button
     if reset_checkbox.instate(['selected']):
         reset_interval_entry.config(state='normal')
         reset_start_time_dropdown.config(state='normal')
+        apply_button.config(state='normal')
+        cancel_timer_button.config(state='normal')
         reset_enabled = True
         send_to_action_tab("Reset scheduling enabled.")
     else:
         reset_interval_entry.config(state='disabled')
         reset_start_time_dropdown.config(state='disabled')
+        apply_button.config(state='disabled')
+        cancel_timer_button.config(state='disabled')
         reset_enabled = False
         send_to_action_tab("Reset scheduling disabled.")
-
-def schedule_resets():
-    """Schedule server resets at the specified interval."""
-    global reset_enabled, reset_interval, reset_start_time, next_reset_time, program_running, server_running
-    while program_running:  # This ensures the loop will stop when the program ends
-        if reset_enabled:
-            
-            now = datetime.now()
-            next_reset = datetime.combine(now.date(), reset_start_time)
-            
-            while next_reset <= now:
-                next_reset += timedelta(hours=reset_interval)
-
-            next_reset_time = next_reset
-            time_to_wait = (next_reset - now).total_seconds()
-            print(f"Next reset scheduled at: {next_reset_time}. Waiting {time_to_wait / 3600:.2f} hours.")
-
-            # Notify on Discord 15 minutes before reset
-            if time_to_wait > 900:
-                threading.Timer(time_to_wait - 900, lambda: send_to_discord(
-                    f"Server will restart at {next_reset.strftime('%Y-%m-%d %H:%M')}. 15 minutes remaining."
-                )).start()
-
-            time.sleep(time_to_wait)
-
-            send_to_discord("Server is restarting. Please wait until the server is back up to reconnect.")
-            send_to_action_tab("Server is restarting")
-            try:
-                stop_server()
-                send_to_action_tab("Server successfully shut down.  Will begin reboot in 30 seconds.")
-                threading.Timer(30).start()
-                send_to_action_tab("Beginning Server Reboot.")
-                start_batch_script()
-            except Exception as e:
-                send_to_action_tab(f"Error Restarting Server.  Please manually shut down. Error: {e}")
-
-            time.sleep(120)  # Wait 2 minutes to ensure the server is stopped before restarting
-        else:
-            # If reset scheduling is disabled, sleep briefly before checking again
-            time.sleep(60)
-
+        
 def apply_reset_settings(interval_var, start_time_var):
     """Apply the reset settings and log the changes."""
-    global reset_interval, reset_start_time, next_reset_time
-    reset_interval = interval_var.get()
-    reset_start_time = datetime.strptime(start_time_var.get().strip(), "%I:%M %p").time()
-    send_to_action_tab(f"Reset settings applied. Interval: {reset_interval} hours, Start Time: {reset_start_time}.")
-
+    if reset_enabled:
+        global reset_interval, reset_start_time, next_reset_time, time_to_wait
+        
+        reset_interval = interval_var.get()
+        reset_start_time = datetime.strptime(start_time_var.get().strip(), "%I:%M %p").time()
+        send_to_action_tab(f"Reset settings applied. Interval: {reset_interval} hours, Start Time: {reset_start_time}.")
+        set_restart_time()
+    else:
+        pop_up_warning("Reset not enabled.  No changes saved.")
+    
+def set_restart_time():   
+    global time_to_wait
     now = datetime.now()
     next_reset = datetime.combine(now.date(), reset_start_time)
     while next_reset <= now:
         next_reset += timedelta(hours=reset_interval)
 
     next_reset_time = next_reset
+    time_to_wait = (next_reset - now).total_seconds()
+    countdown_thread = threading.Thread(target=update_countdown, daemon=True) 
+    countdown_thread.start() 
+    timer_active = True
     send_to_action_tab(f"Next reset will occur at: {next_reset_time}")
+    
+def update_countdown():
+    global time_to_wait, countdown_label, countdown_timer
+    countdown_timer = time_to_wait
+    while timer_active == True:
+        while countdown_timer > 0:
+            hours, remainder = divmod(countdown_timer, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            hours = int(hours)  # Convert hours to integer
+            minutes = int(minutes)  # Convert minutes to integer
+            seconds = int(seconds)
+            countdown_label.config(text=f"Time until next reset: {hours:02d}:{minutes:02d}:{seconds:02d}")
+            print(countdown_timer)
+            restart_reminder()
+            time.sleep(1)
+            countdown_timer -= 1
+        countdown_label.config(text="Reset in Progress.  Please Wait")
+        restart_server()
+        set_restart_time()
+    time_to_wait = 9999
+    countdown_label.config(text="No Current Scheduled Reset")
+
+def restart_server():
+    """Schedule server resets at the specified interval."""
+    global reset_enabled, reset_interval, reset_start_time, next_reset_time, program_running, server_running, time_to_wait
+    while program_running:  # This ensures the loop will stop when the program ends
+        if reset_enabled:
+            
+            send_to_discord("Server is restarting. Please wait until the server is back up to reconnect.")
+            send_to_action_tab("Server is restarting")
+            try:
+                stop_server()
+                send_to_action_tab("Server successfully shut down.  Will begin reboot in 30 seconds.")
+                time.sleep(30)
+                send_to_action_tab("Beginning Server Reboot.")
+                start_batch_script()
+            except Exception as e:
+                send_to_action_tab(f"Error Restarting Server.  Please manually shut down. Error: {e}")
+                
+def cancel_timer():
+    global timer_active
+    timer_active = False
+    pop_up_warning("Reset Timer has been canceled.")
+# %%
 
 def apply_webhook_settings(webhook_url_var):
     """Apply the webhook URL setting."""
@@ -274,12 +310,12 @@ def on_window_close():
         window.destroy()  # Close the window
     
     # Wait for 5 seconds before closing the window
-    window.after(3000, close_program)
-
+    window.after(1000, close_program)
+       
 # %% GUI
 def create_gui():
     """Create the Tkinter GUI."""
-    global window, text_area_main, text_area_all, text_area_warning, text_area_error, text_area_join_code, text_area_action, text_area_processes, program_running
+    global window, text_area_main, text_area_all, text_area_warning, text_area_error, text_area_join_code, text_area_action, text_area_processes, program_running, countdown_label
 
     window = tk.Tk()
     window.title("Tyr VSM")
@@ -326,10 +362,8 @@ def create_gui():
     reset_interval_var = tk.IntVar(value=6)
     reset_start_time_var = tk.StringVar(value="00:00")
 
-    reset_checkbox = ttk.Checkbutton(
-        tab_reset, text="Enable Reset Scheduling",
-        variable=reset_enabled_var,
-        command=lambda: enable_reset(reset_checkbox, reset_interval_entry, reset_start_time_dropdown)
+    reset_checkbox = ttk.Checkbutton(tab_reset, text="Enable Reset Scheduling", variable=reset_enabled_var,
+        command=lambda: enable_reset(reset_checkbox, reset_interval_entry, reset_start_time_dropdown, apply_button)
     )
     reset_checkbox.pack(pady=5)
 
@@ -355,8 +389,14 @@ def create_gui():
     reset_start_time_dropdown.pack(pady=5)
     reset_start_time_dropdown.current(0)
 
-    apply_button = tk.Button(tab_reset, text="Apply Settings", command=lambda: apply_reset_settings(reset_interval_var, reset_start_time_var))
-    apply_button.pack(pady=10)
+    restart_button_frame = tk.Frame(tab_reset)
+    restart_button_frame.pack(side=tk.TOP, pady=10)
+
+    apply_button = tk.Button(restart_button_frame, text="Apply Settings", command=lambda: apply_reset_settings(reset_interval_var, reset_start_time_var), state=tk.DISABLED)
+    apply_button.pack(side=tk.LEFT, padx=5)
+        
+    cancel_timer_button = tk.Button(restart_button_frame, text="Cancel Timer", command=cancel_timer, state=tk.DISABLED)
+    cancel_timer_button.pack(side=tk.LEFT, padx=5)
 
     ttk.Label(tab_webhook, text="Discord Webhook URL:").pack()
     webhook_url_var = tk.StringVar()
@@ -379,8 +419,10 @@ def create_gui():
     
     clear_button = tk.Button(button_frame, text="Clear All", command=clear_text_boxes)
     clear_button.pack(side=tk.LEFT, padx=5)
+    
+    countdown_label = ttk.Label(button_frame, text="Time until next reset: 00:00:00")
+    countdown_label.pack(side=tk.LEFT, padx=5)
 
-    threading.Thread(target=schedule_resets, daemon=True).start()
     window.mainloop()
 
 if __name__ == "__main__":
