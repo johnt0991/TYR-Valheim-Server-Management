@@ -1,19 +1,18 @@
 # %% Modules
-import subprocess
 import time
-import ctypes
-import pyautogui
 import tkinter as tk
 from tkinter import scrolledtext
-from tkinter import ttk
+from tkinter import ttk, filedialog
 import threading
 import requests
-import psutil
 from datetime import datetime, timedelta
 import re
 from tkinter import messagebox
-import signal
-import pexpect
+import subprocess
+import json
+import pyautogui
+import ctypes
+import psutil
 # %%
 # %% Global Variables
 
@@ -93,20 +92,11 @@ def pop_up_warning(message):
         
 # %% Server Run Functions
 def start_batch_script():
-    global process, server_running, session_name, join_code, server_ip, server_command
+    """Runs the .bat script and captures the output."""
+    global process, server_running, session_name, join_code, server_ip
     
-    server_command = [
-        "valheim_server", 
-        "-nographics", 
-        "-batchmode", 
-        "-name", "Nufu Gaming", 
-        "-port", "2456", 
-        "-world", "Gaseoy", 
-        "-password", "nf1234", 
-        "-crossplay"
-    ]    
     # Start the .bat script
-    process = subprocess.Popen(server_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    process = subprocess.Popen(BAT_SCRIPT_PATH, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=True)
     server_running = True
     
     # Add process to active processes
@@ -142,23 +132,33 @@ def start_batch_script():
             update_server_info(line.strip())
             
 def stop_server():
+    """Stop the server by sending CTRL+C (CTRL_C_EVENT) to the process."""
     global process, server_running
-    if process:
-        try:
-            # Attempt graceful shutdown with Ctrl+C (using pexpect for better control)
-            process.sendcontrol('c')  # Send Ctrl+C
-            process.expect(pexpect.EOF, timeout=30)  # Wait for server to exit
-        except:
-            # Fallback to terminate() if Ctrl+C fails
-            process.terminate()
-        process.wait()
+    try:
+        # Get the process ID of the valheim_server.exe process
+        for proc in psutil.process_iter(attrs=['pid', 'name']):
+            if "valheim_server.exe" in proc.info['name']:
+                pid = proc.info['pid']
+                break
+        
+        # Use ctypes to send CTRL+C (CTRL_C_EVENT) to the process
+        if pid:
+            ctypes.windll.kernel32.GenerateConsoleCtrlEvent(0, pid)  # 0 is for CTRL_C_EVENT
+            send_to_action_tab(f"Sent CTRL+C (CTRL_C_EVENT) to process {pid}.") #notating in console
+            # Optionally, wait and send 'y' (simulating confirmation)
+            time.sleep(5)
+            pyautogui.write('y')
+            pyautogui.press('enter')
+            server_running = False
+            send_to_action_tab("Server has successfully stopped.")
+            # Remove process from active processes once it is stopped
+            active_processes.remove(process)
 
-        server_running = False
-        send_to_action_tab("Server has successfully stopped.")
-        active_processes.remove(process)
-        clear_console_boxes()
-    else:
-        send_to_action_tab("Process not found.")
+            
+        else:
+            send_to_action_tab("Process not found.")
+    except Exception as e:
+        print(f"Error stopping the server: {e}")
 
 
 # %%
@@ -276,6 +276,10 @@ def clear_console_boxes():
     text_area_warning.delete(1.0, tk.END)
     text_area_error.delete(1.0, tk.END)
 
+def clear_session_boxes():
+    """Clears all scrolled text areas."""
+    text_area_warning.delete(1.0, tk.END)
+    text_area_error.delete(1.0, tk.END)
    
     
 def on_window_close():
@@ -299,7 +303,7 @@ def on_window_close():
        
 # %% GUI
 def create_gui():
-    global window, text_area_main, apply_button, server_command, port_num_var, text_area_all, cancel_timer_button, text_area_warning, text_area_error, text_area_join_code, text_area_action, text_area_processes, program_running, countdown_label
+    global window,  port_num_var, session_name_var, world_name_var, password_var, text_area_main, apply_button, server_command, port_num_var, text_area_all, cancel_timer_button, text_area_warning, text_area_error, text_area_join_code, text_area_action, text_area_processes, program_running, countdown_label
 
     window = tk.Tk()
     window.title("Tyr VSM")
@@ -335,6 +339,40 @@ def create_gui():
     text_area_join_code.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
     text_area_action = scrolledtext.ScrolledText(tab_action, width=80, height=20, wrap=tk.WORD)
     text_area_action.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+    
+    def save_settings():
+        file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json")])
+        if file_path:
+            settings = {
+                "session_name": session_name_var.get(),
+                "port_number": port_num_var.get(),
+                "world_name": world_name_var.get(),
+                "password": password_var.get()
+            }
+    
+            with open(file_path, "w") as f:
+                json.dump(settings, f)
+    
+            messagebox.showinfo("Settings Saved", "Settings saved successfully!")
+    
+    def load_settings():
+        file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
+        if file_path:
+            try:
+                with open(file_path, "r") as f:
+                    settings = json.load(f)
+    
+                session_name_var.set(settings["session_name"])
+                port_num_var.set(settings["port_number"])
+                world_name_var.set(settings["world_name"])
+                password_var.set(settings["password"])
+    
+                messagebox.showinfo("Settings Loaded", "Settings loaded successfully!")
+            except FileNotFoundError:
+                messagebox.showerror("Settings Not Found", "Settings file not found.")
+            except json.JSONDecodeError:
+                messagebox.showerror("Invalid JSON", "The selected file is not a valid JSON file.")
+
 
     session_name_label = ttk.Label(tab_main, text="Session Name:")
     session_name_label.grid(row=0, column=0, sticky="e", pady=10, padx=10)
@@ -343,33 +381,33 @@ def create_gui():
     session_name_entry = ttk.Entry(tab_main, textvariable=session_name_var)
     session_name_entry.grid(row=0, column=1, stick="w")
     
-    server_name_label = ttk.Label(tab_main, text="Server Name:")
-    server_name_label.grid(row=1, column=0, sticky="e")
-    
-    server_name_var = tk.StringVar()
-    server_name_entry = ttk.Entry(tab_main, textvariable=server_name_var)
-    server_name_entry.grid(row=1, column=1, sticky="w")
-    
     port_num_label = ttk.Label(tab_main, text="Port Number:")
-    port_num_label.grid(row=2, column=0, sticky="e", pady=10)
+    port_num_label.grid(row=1, column=0, sticky="e")
     
     port_num_var = tk.StringVar(value=2456)
     port_num_entry = ttk.Entry(tab_main, textvariable=port_num_var)
-    port_num_entry.grid(row=2, column=1, sticky="w")
+    port_num_entry.grid(row=1, column=1, sticky="w")
     
     world_name_label = ttk.Label(tab_main, text="World Name:")
-    world_name_label.grid(row=3, column=0, sticky="e")
+    world_name_label.grid(row=2, column=0, sticky="e", pady=10)
     
     world_name_var = tk.StringVar()
     world_name_entry = ttk.Entry(tab_main, textvariable=world_name_var)
-    world_name_entry.grid(row=3, column=1, sticky="w")
+    world_name_entry.grid(row=2, column=1, sticky="w")
     
     password_label = ttk.Label(tab_main, text="Server Password:")
-    password_label.grid(row=4, column=0, sticky="e", pady=10)
+    password_label.grid(row=3, column=0, sticky="e")
     
     password_var = tk.StringVar()
     password_entry = ttk.Entry(tab_main, textvariable=password_var)
-    password_entry.grid(row=4, column=1, sticky="w")    
+    password_entry.grid(row=3, column=1, sticky="w")    
+    
+    save_button = ttk.Button(tab_main, text="Save Settings", command=save_settings)
+    save_button.grid(row=4, column=0, pady=10)
+    
+    # Create the load button
+    load_button = ttk.Button(tab_main, text="Load Settings", command=load_settings)
+    load_button.grid(row=4, column=1)
 
     reset_enabled_var = tk.BooleanVar()
     reset_interval_var = tk.IntVar(value=6)
